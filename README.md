@@ -1,6 +1,9 @@
 # nanowhale 🐳 — DeepSeek-V4 MoE at 1B Scale
 
-A DeepSeek-V4 architecture implementation scaled to **~1B parameters** (~400M active via MoE sparsity), trainable on a single **RTX 3080 Ti (12GB)**.
+A DeepSeek-V4 architecture implementation scaled to **~1.2B parameters** (~400M active via MoE sparsity).
+
+- **Colab H100 / A100** — one-click notebook included
+- **RTX 3080 Ti** — verified working with optimized settings
 
 > **Goal**: Match or beat dense models like Qwen3.5-0.8B with 2× faster inference using expert sparsity.
 
@@ -21,7 +24,23 @@ Full DeepSeek-V4 feature set at 1B scale:
 | Layers | 16 |
 | Context | 4,096 (extendable to 64k+ with YaRN + CSA) |
 
-## Quick Start
+## Google Colab (Recommended)
+
+Open the notebook directly:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/RemySkye/nanowhale/blob/main/colab/nanowhale_1b_moe_colab.ipynb)
+
+The notebook handles everything: install → data prep → training → save to Drive.
+
+### Colab Training (manual)
+
+```bash
+# Data prep (7 high-quality public datasets, reasoning-heavy)
+python scripts/prepare_colab_data.py --output data/processed/1b_moe_reasoning
+
+# Full 50k-step training (H100/A100, config-driven, no DeepSpeed)
+python scripts/train_colab.py --config configs/1b_moe_colab_256k.yaml
+```
 
 ### Install
 
@@ -29,20 +48,13 @@ Full DeepSeek-V4 feature set at 1B scale:
 pip install torch transformers datasets safetensors pyyaml
 ```
 
-### Data Preparation
+### Local Training (RTX 3080 Ti, verified working)
 
 ```bash
+# Data prep (3 public datasets)
 python scripts/prepare_1b_data.py --output data/processed/1b_moe_data_ready
-```
 
-Uses public datasets only:
-- HuggingFaceFW/fineweb-edu (55%) — high-quality educational English
-- HuggingFaceTB/cosmopedia (25%) — synthetic textbooks & articles
-- fineweb-edu long-pack (20%) — 32k–64k context blocks
-
-### Pretraining
-
-```bash
+# Training
 python scripts/train_1b_pretrain.py --steps 500 --lr 1.5e-4 --max_len 512
 ```
 
@@ -51,7 +63,7 @@ python scripts/train_1b_pretrain.py --steps 500 --lr 1.5e-4 --max_len 512
 | `--steps` | 500 | Training steps |
 | `--lr` | 1.5e-4 | Learning rate |
 | `--max_len` | 512 | Max sequence length |
-| `--data` | `data/processed/1b_moe_data_ready/final_train` | Dataset path |
+| `--data` | `data/processed/.../final_train` | Dataset path |
 | `--output` | `checkpoints/1b_moe_pretrain` | Output directory |
 
 ## Repo Structure
@@ -60,33 +72,62 @@ python scripts/train_1b_pretrain.py --steps 500 --lr 1.5e-4 --max_len 512
 ├── modeling_deepseek_v4.py          # DeepSeek-V4 model (MLA + MoE + HC)
 ├── configuration_deepseek_v4.py     # Model config class
 ├── 1B_MOE_QAT_SCALING_PLAN.md       # Full scaling plan & QAT strategy
+├── colab/
+│   └── nanowhale_1b_moe_colab.ipynb  # All-in-one Colab notebook
 ├── configs/
 │   ├── main_100m.yaml               # Original 110M config
-│   ├── debug_1b_moe.yaml            # 1B debug config
-│   ├── 1b_moe_64k_qat.yaml          # Target 64k+ QAT config
-│   └── deepspeed_zero3_3080ti.json  # ZeRO-3 optimized for 3080 Ti
+│   ├── debug_1b_moe.yaml            # 1B debug config (3080 Ti)
+│   └── 1b_moe_colab_256k.yaml       # Colab H100/A100 256k config
 ├── scripts/
-│   ├── train_1b_pretrain.py          # 1B pretraining
-│   ├── train_pretrain.py             # Original 110M pretraining (SFTTrainer)
+│   ├── train_colab.py                # Colab pretraining (pure PyTorch)
+│   ├── train_1b_pretrain.py          # Local pretraining (RTX 3080 Ti)
+│   ├── train_pretrain.py             # Original 110M (SFTTrainer)
 │   ├── train_sft.py                  # SFT fine-tuning
-│   ├── prepare_1b_data.py            # 1B data preparation
+│   ├── prepare_colab_data.py         # Colab data prep (reasoning mix)
+│   ├── prepare_1b_data.py            # Local data prep
 │   ├── prepare_data.py               # Original data utilities
-│   ├── chat.py                       # Interactive chat
-│   ├── eval_smoke.py                 # Perplexity evaluation
-│   ├── count_params.py               # Parameter counting
-│   └── upload_to_hub.py              # Hub upload
+│   ├── chat.py / eval_smoke.py       # Inference & evaluation
+│   ├── count_params.py / inspect_*.py # Analysis tools
+│   └── upload_to_hub.py              # HF Hub upload
 └── tokenizer/
     ├── tokenizer.json
     └── tokenizer_config.json
 ```
 
-## Memory Optimizations (for RTX 3080 Ti)
+## Dataset
 
-- BF16 mixed precision with `torch.amp`
+**Colab (reasoning-heavy, 7 datasets)**: `scripts/prepare_colab_data.py`
+
+| Dataset | Weight | Purpose |
+|---------|--------|---------|
+| HuggingFaceFW/fineweb-2 | 30% | General English knowledge |
+| allenai/c4 | 20% | Clean web text |
+| m-a-p/FineFineWeb | 12% | Curated high-quality web |
+| deepmind/code_contests | 10% | Competitive coding reasoning |
+| openai/gsm8k | 10% | Math reasoning |
+| google-research-datasets/mbpp | 8% | Python problem solving |
+| fineweb-2 long-pack | 10% | 64k+ context blocks |
+
+**Local (fast, 3 datasets)**: `scripts/prepare_1b_data.py`
+
+| Dataset | Weight | Purpose |
+|---------|--------|---------|
+| HuggingFaceFW/fineweb-edu | 55% | Educational English |
+| HuggingFaceTB/cosmopedia | 25% | Synthetic textbooks |
+| fineweb-edu long-pack | 20% | 32k-64k context blocks |
+
+## Optimizations
+
+**Colab (H100/A100)**:
+- BF16 + torch.compile (big speedup on H100)
+- No DeepSpeed needed (model fits easily in 80GB)
+- Curriculum context: 4k → 256k
+- AdamW fused + efficient attention (SDPA)
+
+**Local (RTX 3080 Ti)**:
+- BF16 mixed precision
 - Gradient checkpointing
-- DeepSpeed ZeRO-3 ready (`configs/deepspeed_zero3_3080ti.json`)
-- torchao MXFP8 MoE expert quantization (planned, see scaling plan)
-- Selective QAT for INT4 deployment (see `1B_MOE_QAT_SCALING_PLAN.md`)
+- Small batches with gradient accumulation
 
 ## Known Issues
 
