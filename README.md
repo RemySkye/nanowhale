@@ -1,119 +1,98 @@
-# nanowhale 🐳
+# nanowhale 🐳 — DeepSeek-V4 MoE at 1B Scale
 
-A ~110M parameter language model trained from scratch using the **DeepSeek-V4 architecture**. This repo contains all the code, configs, and tokenizer used to pretrain and fine-tune the model.
+A DeepSeek-V4 architecture implementation scaled to **~1B parameters** (~400M active via MoE sparsity), trainable on a single **RTX 3080 Ti (12GB)**.
 
-## Models
-
-| Model | Description | Link |
-|---|---|---|
-| **nanowhale-100m-base** | Pretrained base model (5K steps on FineWeb-Edu) | [🤗 Hub](https://huggingface.co/cmpatino/nanowhale-100m-base) |
-| **nanowhale-100m** | SFT chat model (3K steps on SmolTalk) | [🤗 Hub](https://huggingface.co/cmpatino/nanowhale-100m) |
+> **Goal**: Match or beat dense models like Qwen3.5-0.8B with 2× faster inference using expert sparsity.
 
 ## Architecture
 
-The model implements the full DeepSeek-V4 feature set at miniature scale:
+Full DeepSeek-V4 feature set at 1B scale:
 
-- **Multi-Head Latent Attention (MLA)** — 8 heads, 1 KV head (MQA), head_dim=96 (32 RoPE + 64 NoPE), q_lora_rank=160
-- **Mixture-of-Experts (MoE)** — 4 routed + 1 shared expert, top-2 routing, SwiGLU FFN (dim 640)
-- **Hyper-Connections** — hc_mult=4, Sinkhorn routing (2 iterations)
-- **Multi-Token Prediction (MTP)** — 1 next-token prediction layer
+- **Multi-Head Latent Attention (MLA)** — 16 heads, 1 KV head (MQA), head_dim=128 (32 RoPE + 96 NoPE), q_lora_rank=384
+- **Mixture-of-Experts (MoE)** — 12 routed + 2 shared experts, top-2 routing, SwiGLU FFN (dim 2048)
+- **Hyper-Connections** — hc_mult=2, Sinkhorn routing
+- **Vocab**: 128,000 tokens (DeepSeek-V4 tokenizer)
 
 | Parameter | Value |
-|---|---|
-| Total params | ~110M (41M embeddings + 69M non-embedding) |
-| Hidden size | 320 |
-| Layers | 8 |
-| Vocab size | 129,280 (DeepSeek-V4 tokenizer) |
-| Context length | 2,048 tokens |
-
-## Repo Structure
-
-```
-├── modeling_deepseek_v4.py         # DeepSeek-V4 model implementation
-├── configuration_deepseek_v4.py    # Model config class
-├── requirements.txt
-├── configs/
-│   ├── main_100m.yaml              # Training hyperparameters (100M model)
-│   ├── debug.yaml                  # Quick debug config (50 steps)
-│   └── fallback_under_1b.yaml      # Alternative config
-├── scripts/
-│   ├── train_pretrain.py            # Pretraining (SFTTrainer on FineWeb-Edu)
-│   ├── train_sft.py                 # SFT fine-tuning (SFTTrainer on SmolTalk)
-│   ├── eval_smoke.py                # Perplexity evaluation & generation
-│   ├── chat.py                      # Interactive chat
-│   ├── upload_to_hub.py             # Hub upload utility
-│   ├── count_params.py              # Parameter counting
-│   ├── prepare_data.py              # Data preparation
-│   └── inspect_deepseek_v4.py       # Architecture inspection
-└── tokenizer/
-    ├── tokenizer.json
-    └── tokenizer_config.json
-```
+|-----------|-------|
+| Total params | ~1.09B |
+| Active per token | ~400M (MoE top-2) |
+| Hidden size | 768 |
+| Layers | 16 |
+| Context | 4,096 (extendable to 64k+ with YaRN + CSA) |
 
 ## Quick Start
 
 ### Install
 
 ```bash
-pip install -r requirements.txt
+pip install torch transformers datasets safetensors pyyaml
 ```
+
+### Data Preparation
+
+```bash
+python scripts/prepare_1b_data.py --output data/processed/1b_moe_data_ready
+```
+
+Uses public datasets only:
+- HuggingFaceFW/fineweb-edu (55%) — high-quality educational English
+- HuggingFaceTB/cosmopedia (25%) — synthetic textbooks & articles
+- fineweb-edu long-pack (20%) — 32k–64k context blocks
 
 ### Pretraining
 
 ```bash
-python scripts/train_pretrain.py --config configs/main_100m.yaml
+python scripts/train_1b_pretrain.py --steps 500 --lr 1.5e-4 --max_len 512
 ```
 
-### SFT
+| Arg | Default | Description |
+|-----|---------|-------------|
+| `--steps` | 500 | Training steps |
+| `--lr` | 1.5e-4 | Learning rate |
+| `--max_len` | 512 | Max sequence length |
+| `--data` | `data/processed/1b_moe_data_ready/final_train` | Dataset path |
+| `--output` | `checkpoints/1b_moe_pretrain` | Output directory |
 
-```bash
-python scripts/train_sft.py
+## Repo Structure
+
+```
+├── modeling_deepseek_v4.py          # DeepSeek-V4 model (MLA + MoE + HC)
+├── configuration_deepseek_v4.py     # Model config class
+├── 1B_MOE_QAT_SCALING_PLAN.md       # Full scaling plan & QAT strategy
+├── configs/
+│   ├── main_100m.yaml               # Original 110M config
+│   ├── debug_1b_moe.yaml            # 1B debug config
+│   ├── 1b_moe_64k_qat.yaml          # Target 64k+ QAT config
+│   └── deepspeed_zero3_3080ti.json  # ZeRO-3 optimized for 3080 Ti
+├── scripts/
+│   ├── train_1b_pretrain.py          # 1B pretraining
+│   ├── train_pretrain.py             # Original 110M pretraining (SFTTrainer)
+│   ├── train_sft.py                  # SFT fine-tuning
+│   ├── prepare_1b_data.py            # 1B data preparation
+│   ├── prepare_data.py               # Original data utilities
+│   ├── chat.py                       # Interactive chat
+│   ├── eval_smoke.py                 # Perplexity evaluation
+│   ├── count_params.py               # Parameter counting
+│   └── upload_to_hub.py              # Hub upload
+└── tokenizer/
+    ├── tokenizer.json
+    └── tokenizer_config.json
 ```
 
-### Chat
+## Memory Optimizations (for RTX 3080 Ti)
 
-```bash
-python scripts/chat.py
-```
-
-### Evaluation
-
-```bash
-python scripts/eval_smoke.py
-```
-
-## Training Results
-
-### Pretraining (5,000 steps on FineWeb-Edu)
-
-| Metric | Value |
-|---|---|
-| Tokens seen | ~2.6B |
-| Final loss | ~5.3 |
-| Token accuracy | 33.8% |
-| Hardware | 1× H100 80GB, bf16 |
-| Throughput | 72ms/step (with `torch.compile`) |
-
-### SFT (3,000 steps on SmolTalk)
-
-| Metric | Start | End |
-|---|---|---|
-| Train loss | 15.41 | 10.22 |
-| Eval loss | 2.873 | 2.607 |
-| Token accuracy | 36.2% | 48.5% |
-
-### Perplexity (held-out English text)
-
-| Model | Perplexity |
-|---|---|
-| Pretrained | 13.62 |
-| SFT | 12.90 |
+- BF16 mixed precision with `torch.amp`
+- Gradient checkpointing
+- DeepSpeed ZeRO-3 ready (`configs/deepspeed_zero3_3080ti.json`)
+- torchao MXFP8 MoE expert quantization (planned, see scaling plan)
+- Selective QAT for INT4 deployment (see `1B_MOE_QAT_SCALING_PLAN.md`)
 
 ## Known Issues
 
-- **bf16 NaN**: The model produces NaN in bf16 at this small scale. Use fp32 for inference and training. This is due to the Hyper-Connections architecture producing values that overflow bf16 range.
-- **`from_pretrained` quirk**: The custom architecture causes `from_pretrained` to re-initialize some weights. Use manual `load_state_dict` instead (see model cards for examples).
-- **Large vocab / small model**: The 129K vocab embedding table consumes 37% of all parameters, limiting capacity for language modeling.
+- **bf16 NaN**: The model can produce NaN in bf16 at small scale. Training scripts use safety handling.
+- **from_pretrained quirk**: Custom architecture may re-initialize weights. Use manual `load_state_dict`.
+- **Token IDs must match vocab**: The config `vocab_size` MUST match the tokenizer (128,000). Mismatch causes CUDA index errors.
 
 ## License
 

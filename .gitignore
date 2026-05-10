@@ -1,0 +1,22 @@
+# Generated / large files
+data/processed/
+checkpoints/
+__pycache__/
+*.pyc
+
+# Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Training artifacts
+wandb/
+*.safetensors
+*.pt
+*.bin
