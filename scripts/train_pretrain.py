@@ -114,7 +114,9 @@ def main():
         lr_scheduler_type=train_cfg.get("lr_scheduler_type", "cosine"),
         warmup_ratio=train_cfg.get("warmup_ratio", 0.03),
         max_steps=max_steps,
-        bf16=torch.cuda.is_available() and train_cfg.get("bf16", True),
+        bf16=False,  # Use fp32 - bf16 causes NaN with HC architecture (see BUG_FIXES.md)
+        fp16=False,  # Also disable fp16 for stability
+        # Training will run in full fp32 precision
         gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
         gradient_checkpointing_kwargs={"use_reentrant": False},
         # Logging
@@ -176,6 +178,20 @@ def main():
     # Save final checkpoint
     trainer.save_model(os.path.join(output_dir, "final"))
     tokenizer.save_pretrained(os.path.join(output_dir, "final"))
+    
+    # Also save in safetensors format for compatibility
+    try:
+        from safetensors.torch import save_file
+        import torch
+        model_path = os.path.join(output_dir, "final")
+        if os.path.exists(os.path.join(model_path, "pytorch_model.bin")):
+            state_dict = torch.load(os.path.join(model_path, "pytorch_model.bin"), map_location="cpu")
+            save_file(state_dict, os.path.join(model_path, "model.safetensors"))
+            os.remove(os.path.join(model_path, "pytorch_model.bin"))
+            print("Converted to safetensors format")
+    except Exception as e:
+        print(f"Warning: Could not convert to safetensors: {e}")
+    
     print(f"\nFinal model saved to {output_dir}/final")
 
 

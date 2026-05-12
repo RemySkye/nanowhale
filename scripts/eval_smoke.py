@@ -42,7 +42,17 @@ def main():
 
     # 3. Load model
     print("\n[3/6] Loading model...")
-    model = DeepseekV4ForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.bfloat16)
+    # Try fp32 first (recommended for stability with HC architecture)
+    # bf16/fp16 can cause NaN issues - see BUG_FIXES.md
+    try:
+        model = DeepseekV4ForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.float32)
+    except Exception as e:
+        print(f"  Warning: fp32 loading failed, trying bfloat16: {e}")
+        try:
+            model = DeepseekV4ForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.bfloat16)
+        except Exception as e2:
+            print(f"  Warning: bfloat16 also failed, using default: {e2}")
+            model = DeepseekV4ForCausalLM.from_pretrained(args.model_path)
     model = model.to(args.device)
     model.eval()
     total_params = sum(p.numel() for p in model.parameters())

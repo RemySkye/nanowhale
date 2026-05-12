@@ -39,7 +39,16 @@ def main():
 
     # Load pretrained model
     print(f"Loading pretrained model from {args.pretrained_path}")
-    model = DeepseekV4ForCausalLM.from_pretrained(args.pretrained_path)
+    # Use fp32 for stability (bf16 causes NaN with HC architecture - see BUG_FIXES.md)
+    try:
+        model = DeepseekV4ForCausalLM.from_pretrained(args.pretrained_path, torch_dtype=torch.float32)
+    except Exception as e:
+        print(f"  Warning: fp32 loading failed, trying bfloat16: {e}")
+        try:
+            model = DeepseekV4ForCausalLM.from_pretrained(args.pretrained_path, torch_dtype=torch.bfloat16)
+        except Exception as e2:
+            print(f"  Warning: bfloat16 also failed, using default: {e2}")
+            model = DeepseekV4ForCausalLM.from_pretrained(args.pretrained_path)
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model loaded: {total_params:,} parameters ({total_params/1e6:.1f}M)")
 
@@ -68,7 +77,9 @@ def main():
         lr_scheduler_type="cosine",
         warmup_ratio=0.05,
         max_steps=args.max_steps,
-        bf16=torch.cuda.is_available(),
+        bf16=False,  # Use fp32 - bf16 causes NaN with HC architecture (see BUG_FIXES.md)
+        fp16=False,  # Also disable fp16 for stability
+        # Training will run in full fp32 precision
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         # Logging
@@ -126,6 +137,19 @@ def main():
     final_dir = os.path.join(args.output_dir, "final")
     trainer.save_model(final_dir)
     tokenizer.save_pretrained(final_dir)
+    
+    # Also save in safetensors format
+    try:
+        from safetensors.torch import save_file
+        import torch
+        if os.path.exists(os.path.join(final_dir, "pytorch_model.bin")):
+            state_dict = torch.load(os.path.join(final_dir, "pytorch_model.bin"), map_location="cpu")
+            save_file(state_dict, os.path.join(final_dir, "model.safetensors"))
+            os.remove(os.path.join(final_dir, "pytorch_model.bin"))
+            print("Converted to safetensors format")
+    except Exception as e:
+        print(f"Warning: Could not convert to safetensors: {e}")
+    
     print(f"\nSFT model saved to {final_dir}")
 
 

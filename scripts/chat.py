@@ -25,7 +25,16 @@ def main():
 
     print(f"Loading model from {args.model_path}...")
     tokenizer = PreTrainedTokenizerFast.from_pretrained(args.model_path)
-    model = DeepseekV4ForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.bfloat16)
+    # Use fp32 for stability (bf16 causes NaN with HC architecture - see BUG_FIXES.md)
+    try:
+        model = DeepseekV4ForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.float32)
+    except Exception as e:
+        print(f"  Warning: fp32 loading failed, trying bfloat16: {e}")
+        try:
+            model = DeepseekV4ForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.bfloat16)
+        except Exception as e2:
+            print(f"  Warning: bfloat16 also failed, using default: {e2}")
+            model = DeepseekV4ForCausalLM.from_pretrained(args.model_path)
     model = model.to(args.device).eval()
     print(f"Model loaded on {args.device}")
     print("Type 'quit' to exit.\n")

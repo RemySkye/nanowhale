@@ -22,16 +22,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 from datasets import load_from_disk
 from transformers import PreTrainedTokenizerFast
+from safetensors.torch import save_file
 
 from configuration_deepseek_v4 import DeepseekV4Config
 from modeling_deepseek_v4 import DeepseekV4ForCausalLM
 
 
 def safe_forward(model, input_ids, labels):
-    """Forward pass with error recovery for index issues."""
+    """Forward pass with error recovery for index issues and NaN handling."""
     try:
         outputs = model(input_ids=input_ids, labels=labels)
-        return outputs.loss
+        loss = outputs.loss
+        # Check for NaN loss
+        if loss is not None and torch.isnan(loss):
+            print("  [WARN] NaN loss detected, skipping batch")
+            return None
+        return loss
     except RuntimeError as e:
         if "assert" in str(e).lower() or "index" in str(e).lower():
             print("  [WARN] Skipping problematic batch")
@@ -53,7 +59,7 @@ def main():
     print("=" * 60)
 
     model_cfg = dict(
-        vocab_size=128000,
+        vocab_size=129280,
         hidden_size=768,
         num_hidden_layers=16,
         num_attention_heads=16,
@@ -123,7 +129,7 @@ def main():
         optimizer.zero_grad()
 
         if scaler is not None:
-            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            with torch.amp.autocast("cuda", dtype=torch.float32):
                 loss = safe_forward(model, input_ids, labels)
             if loss is None:
                 continue
@@ -149,13 +155,16 @@ def main():
         if (step + 1) % 100 == 0:
             ckpt = os.path.join(args.output, f"step_{step+1}")
             os.makedirs(ckpt, exist_ok=True)
-            torch.save(model.state_dict(), os.path.join(ckpt, "model.pt"))
+            # Save as safetensors (safer and faster)
+            state_dict = model.state_dict()
+            save_file(state_dict, os.path.join(ckpt, "model.safetensors"))
             tokenizer.save_pretrained(ckpt)
             print(f"  [Saved] {ckpt}")
 
     final = os.path.join(args.output, "final")
     os.makedirs(final, exist_ok=True)
-    torch.save(model.state_dict(), os.path.join(final, "model.pt"))
+    state_dict = model.state_dict()
+    save_file(state_dict, os.path.join(final, "model.safetensors"))
     tokenizer.save_pretrained(final)
 
     print("=" * 60)

@@ -62,7 +62,7 @@ training:
   max_grad_norm: 1.0
   lr_scheduler_type: cosine
   warmup_ratio: 0.03
-  bf16: true
+  bf16: false  # Use fp32 - bf16 causes NaN with HC architecture (see BUG_FIXES.md)
   max_steps: 5000
   save_steps: 500
   logging_steps: 10

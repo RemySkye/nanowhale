@@ -34,4 +34,4 @@ training:
   learning_rate: 3.0e-4
   max_steps: 50
   warmup_steps: 5
-  bf16: true
+  bf16: false  # Use fp32 - bf16 causes NaN with HC architecture (see BUG_FIXES.md)
